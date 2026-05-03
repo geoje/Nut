@@ -1,17 +1,42 @@
-import { Button } from "@/components/ui/button"
+import { useState } from "react"
+import { ScreenShare } from "@/components/ScreenShare"
+import { PokerStatus } from "@/components/PokerStatus"
+import { AiChat, type ChatMessage } from "@/components/AiChat"
+import { PromptInput } from "@/components/PromptInput"
 
 export function App() {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+
+  const handleSend = (text: string) => {
+    setMessages((prev) => [...prev, { role: "user", content: text }])
+    // AI response to be implemented later
+  }
+
   return (
-    <div className="flex min-h-svh p-6">
-      <div className="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-        <div>
-          <h1 className="font-medium">Project ready!</h1>
-          <p>You may now add components and start building.</p>
-          <p>We&apos;ve already added the button component for you.</p>
-          <Button className="mt-2">Button</Button>
+    <div className="flex h-screen w-screen overflow-hidden bg-background">
+      {/* 왼쪽: 화면 공유 */}
+      <div className="flex h-full max-w-[50%] min-w-0 flex-1 flex-col p-3">
+        <ScreenShare />
+      </div>
+
+      {/* 구분선 */}
+      <div className="w-px shrink-0 bg-border" />
+
+      {/* 오른쪽: 포커 상태 / AI 대화 / 프롬프트 입력 */}
+      <div className="flex h-full w-0 flex-1 flex-col gap-0 overflow-hidden">
+        {/* 포커 상태 */}
+        <div className="min-h-0 shrink-0 basis-[30%] overflow-hidden border-b border-border p-3">
+          <PokerStatus />
         </div>
-        <div className="font-mono text-xs text-muted-foreground">
-          (Press <kbd>d</kbd> to toggle dark mode)
+
+        {/* AI 대화 */}
+        <div className="min-h-0 flex-1 overflow-hidden border-b border-border p-3">
+          <AiChat messages={messages} />
+        </div>
+
+        {/* 프롬프트 입력 */}
+        <div className="shrink-0 p-3">
+          <PromptInput onSend={handleSend} />
         </div>
       </div>
     </div>
