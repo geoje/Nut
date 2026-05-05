@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react"
 import { Bot, User } from "lucide-react"
 
 export interface ChatMessage {
@@ -7,9 +8,16 @@ export interface ChatMessage {
 
 interface AiChatProps {
   messages: ChatMessage[]
+  isLoading?: boolean
 }
 
-export function AiChat({ messages }: AiChatProps) {
+export function AiChat({ messages, isLoading }: AiChatProps) {
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
+
   return (
     <div className="flex h-full flex-col gap-2">
       <span className="text-sm font-medium text-muted-foreground">
@@ -36,17 +44,23 @@ export function AiChat({ messages }: AiChatProps) {
                 )}
               </div>
               <div
-                className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                className={`max-w-[80%] min-w-0 rounded-lg px-3 py-2 text-sm break-words whitespace-pre-wrap ${
                   msg.role === "user"
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-foreground"
                 }`}
               >
                 {msg.content}
+                {isLoading &&
+                  i === messages.length - 1 &&
+                  msg.role === "assistant" && (
+                    <span className="ml-1 inline-block h-3 w-1 animate-pulse bg-current opacity-70" />
+                  )}
               </div>
             </div>
           ))
         )}
+        <div ref={bottomRef} />
       </div>
     </div>
   )

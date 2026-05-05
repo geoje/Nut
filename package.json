@@ -14,9 +14,11 @@
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.2.8",
+    "@google/generative-ai": "^0.24.1",
     "@tailwindcss/vite": "^4.2.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "groq-sdk": "^1.1.2",
     "lucide-react": "^1.14.0",
     "radix-ui": "^1.4.3",
     "react": "^19.2.5",
