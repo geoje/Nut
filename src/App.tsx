@@ -10,6 +10,7 @@ import {
   type PlayerInfo,
   type OcrRegions,
   type HoleCard,
+  type Street,
 } from "@/lib/poker-ocr"
 
 export function App() {
@@ -23,6 +24,8 @@ export function App() {
     { rank: null, suit: null },
     { rank: null, suit: null },
   ])
+  const [communityCards, setCommunityCards] = useState<HoleCard[]>([])
+  const [street, setStreet] = useState<Street>("preflop")
   const prevPlayersRef = useRef<PlayerInfo[]>([])
   const ocrRegionsRef = useRef<OcrRegions>({
     dealerRegions: [],
@@ -32,6 +35,8 @@ export function App() {
     nameRegions: [],
     cardRankRegions: [],
     cardSuitRegions: [],
+    communityRankRegions: [],
+    communitySuitRegions: [],
   })
 
   const handleRegionsChange = useCallback((regions: OcrRegions) => {
@@ -45,6 +50,8 @@ export function App() {
         players: result,
         totalPot: pot,
         holeCards: cards,
+        communityCards: board,
+        street: detectedStreet,
       } = await extractPokerPlayers(canvas, ocrRegionsRef.current)
       const prev = prevPlayersRef.current
       const merged = result.map((p, i) => {
@@ -56,6 +63,8 @@ export function App() {
       setPlayers(merged)
       setTotalPot(pot)
       setHoleCards(cards)
+      setCommunityCards(board)
+      setStreet(detectedStreet)
     } catch (e) {
       void e
     } finally {
@@ -115,6 +124,13 @@ export function App() {
     const c2 = cardStr(holeCards[1].rank, holeCards[1].suit)
     const holeStr = c1 && c2 ? `${c1} ${c2}` : (c1 ?? c2 ?? "(unknown)")
     const potStr = totalPot !== null ? `${totalPot} BB` : "unknown"
+    const streetStr = street.charAt(0).toUpperCase() + street.slice(1)
+    const boardStr =
+      communityCards.length > 0
+        ? communityCards
+            .map((c) => `${c.rank ?? "?"}${c.suit ?? "?"}`)
+            .join(" ")
+        : "(none yet)"
 
     const playerLines = players
       .map((p) => {
@@ -135,7 +151,10 @@ export function App() {
       .join("\n")
 
     return (
+      `I'm playing online poker. Here is the current situation:\n\n` +
+      `Street: ${streetStr}\n` +
       `My hole cards: ${holeStr}\n` +
+      `Board: ${boardStr}\n` +
       `Pot: ${potStr}\n\n` +
       `Players (clockwise from BTN):\n${playerLines}\n\n` +
       `What is the optimal action and why? Consider pot odds, position, and hand strength.\n\n` +
@@ -143,7 +162,7 @@ export function App() {
       `**Action**: [Fold / Call / Raise X BB]\n` +
       `**Reason**: [1-2 sentences max]`
     )
-  }, [players, totalPot, holeCards])
+  }, [players, totalPot, holeCards, communityCards, street])
 
   const handleAnalyze = useCallback(() => {
     handleSend(buildPokerPrompt())
@@ -171,6 +190,8 @@ export function App() {
             isAnalyzing={isAnalyzing}
             totalPot={totalPot}
             holeCards={holeCards}
+            communityCards={communityCards}
+            street={street}
           />
         </div>
 

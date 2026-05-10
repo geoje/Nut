@@ -45,14 +45,20 @@ export interface OcrRegions {
   totalRegion?: Region // single region, OCR total pot
   actionRegions: Region[] // up to 8, OCR current bet per player
   nameRegions: Region[] // up to 8, detect whose turn (countdown timer)
-  cardRankRegions: Region[] // up to 2, OCR card rank (A-K)
-  cardSuitRegions: Region[] // up to 2, pixel-analysis suit detection
+  cardRankRegions: Region[] // up to 2, OCR hole card rank (R1, R2)
+  cardSuitRegions: Region[] // up to 2, pixel-analysis hole card suit (S1, S2)
+  communityRankRegions: Region[] // up to 5, OCR community card rank (R3-R7)
+  communitySuitRegions: Region[] // up to 5, pixel-analysis community card suit (S3-S7)
 }
+
+export type Street = "preflop" | "flop" | "turn" | "river"
 
 export interface ExtractResult {
   players: PlayerInfo[]
   totalPot: number | null
   holeCards: [HoleCard, HoleCard]
+  communityCards: HoleCard[]
+  street: Street
 }
 
 // ---------------------------------------------------------------------------
@@ -306,9 +312,38 @@ function parseBB(text: string): number | null {
   return isNaN(v) ? null : v
 }
 
-// Returns true if text looks like a countdown timer (1–2 digit number)
-function isCountdownTimer(text: string): boolean {
-  return /^\d{1,2}$/.test(text.trim())
+// Returns the seat index whose name region has the lowest bright-pixel ratio.
+// When NOT on turn: name text (~196,204,207 gray) is visible → high bright ratio.
+// When ON turn: colored timer replaces the name → low bright ratio.
+function detectActiveSeatByBrightness(
+  frame: HTMLCanvasElement,
+  nameRegions: Region[]
+): number {
+  if (nameRegions.length === 0) return -1
+  const ratios: number[] = nameRegions.map((r) => {
+    const canvas = cropToRegion(frame, r)
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return 1
+    const { width, height } = canvas
+    const { data } = ctx.getImageData(0, 0, width, height)
+    let bright = 0,
+      total = 0
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] < 128) continue
+      total++
+      if (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2] >= 150)
+        bright++
+    }
+    return total === 0 ? 1 : bright / total
+  })
+  const min = Math.min(...ratios)
+  const minIdx = ratios.indexOf(min)
+  console.log(
+    "[gray≥150]",
+    ratios.map((s, i) => `seat${i}:${(s * 100).toFixed(1)}%`).join(" | ")
+  )
+  // Turn seat has near-zero bright pixels (<1%). Non-turn seats show name text (≥2%).
+  return min < 0.01 ? minIdx : -1
 }
 
 // Parse rank OCR output → canonical card rank
@@ -455,21 +490,69 @@ function detectSuit(canvas: HTMLCanvasElement): CardSuit {
 }
 
 // ---------------------------------------------------------------------------
+// Detect whether a region contains a visible card
+// Criteria: avg luminance > 180 (white-ish bg) AND ≥5% foreground pixels
+// ---------------------------------------------------------------------------
+function detectCardPresence(frame: HTMLCanvasElement, region: Region): boolean {
+  const canvas = cropToRegion(frame, region)
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return false
+  const { width, height } = canvas
+  const { data } = ctx.getImageData(0, 0, width, height)
+
+  let totalR = 0,
+    totalG = 0,
+    totalB = 0,
+    count = 0
+  const lums: number[] = []
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue
+    const r = data[i],
+      g = data[i + 1],
+      b = data[i + 2]
+    totalR += r
+    totalG += g
+    totalB += b
+    count++
+    lums.push(0.299 * r + 0.587 * g + 0.114 * b)
+  }
+  if (count === 0) return false
+
+  const avgR = totalR / count
+  const avgG = totalG / count
+  const avgB = totalB / count
+  const avgLum = 0.299 * avgR + 0.587 * avgG + 0.114 * avgB
+
+  // Must be reasonably bright (card face ~232,232,232)
+  if (avgLum < 150) return false
+
+  // Reject blue-dominant table backgrounds: blue clearly higher than red and green
+  if (avgB > avgR + 20 && avgB > avgG + 10) return false
+
+  // Check fg pixels (rank/pip character) exist above noise floor
+  const t = otsuThreshold(lums)
+  const fgCount = lums.filter((v) => v < t).length
+  return fgCount / lums.length > 0.015
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 export async function extractPokerPlayers(
   frame: HTMLCanvasElement,
   regions?: OcrRegions
 ): Promise<ExtractResult> {
-  if (!regions)
-    return {
-      players: [],
-      totalPot: null,
-      holeCards: [
-        { rank: null, suit: null },
-        { rank: null, suit: null },
-      ],
-    }
+  const empty: ExtractResult = {
+    players: [],
+    totalPot: null,
+    holeCards: [
+      { rank: null, suit: null },
+      { rank: null, suit: null },
+    ],
+    communityCards: [],
+    street: "preflop",
+  }
+  if (!regions) return empty
 
   const {
     dealerRegions,
@@ -479,16 +562,10 @@ export async function extractPokerPlayers(
     nameRegions = [],
     cardRankRegions = [],
     cardSuitRegions = [],
+    communityRankRegions = [],
+    communitySuitRegions = [],
   } = regions
-  if (bbRegions.length === 0)
-    return {
-      players: [],
-      totalPot: null,
-      holeCards: [
-        { rank: null, suit: null },
-        { rank: null, suit: null },
-      ],
-    }
+  if (bbRegions.length === 0) return empty
 
   const n = bbRegions.length
   const bbWorker = await getBBWorker()
@@ -525,24 +602,28 @@ export async function extractPokerPlayers(
     })
   )
 
-  // 5. Detect whose turn via name regions (countdown timer = pure 1–2 digit number)
-  let currentSeatIdx = -1
-  if (nameRegions.length > 0) {
-    const nameTexts = await Promise.all(
-      nameRegions.slice(0, n).map(async (r) => {
-        const { data } = await bbWorker.recognize(cropToRegion(frame, r))
-        return data.text.trim()
-      })
-    )
-    for (let i = 0; i < nameTexts.length; i++) {
-      if (isCountdownTimer(nameTexts[i])) {
-        currentSeatIdx = i
-        break
-      }
-    }
-  }
+  // 5. Detect whose turn via name regions:
+  //    The active player's name region has a dark background (timer highlight).
+  //    We find the seat with the lowest bright-pixel ratio.
+  const currentSeatIdx =
+    nameRegions.length > 0
+      ? detectActiveSeatByBrightness(frame, nameRegions.slice(0, n))
+      : -1
 
-  // 6. Build ordered player list (clockwise from BTN)
+  // 6. Detect street via community rank regions R3,R4,R5 (indices 0,1,2)
+  //    A region "has a card" if it shows a white-ish card face with fg symbol.
+  const communityPresence = communityRankRegions.map((r) =>
+    detectCardPresence(frame, r)
+  )
+  let street: Street = "preflop"
+  if (communityPresence[0] && communityPresence[1] && communityPresence[2]) {
+    if (communityPresence[4]) street = "river"
+    else if (communityPresence[3]) street = "turn"
+    else street = "flop"
+  }
+  const isPreflop = street === "preflop"
+
+  // 7. Build ordered player list (clockwise from BTN)
   const posLabels =
     POSITIONS[n] ?? Array.from({ length: n }, (_, i) => `Seat ${i + 1}`)
 
@@ -555,6 +636,9 @@ export async function extractPokerPlayers(
         : currentSeatIdx
       : -1
 
+  // BB is at offset=2 (BTN=0, SB=1, BB=2) — last to act preflop.
+  // Preflop: auto-fold inference is unreliable (BB hasn't acted yet when
+  // it's UTG's turn), so skip it entirely on preflop.
   const players: PlayerInfo[] = Array.from({ length: n }, (_, offset) => {
     const seatIdx = dealerIdx >= 0 ? (dealerIdx + offset) % n : offset
 
@@ -563,8 +647,8 @@ export async function extractPokerPlayers(
     let action: "fold" | number | null = null
     if (detectedAmount !== null) {
       action = detectedAmount
-    } else if (currentOffset >= 0 && offset < currentOffset) {
-      // Player came before current player in this betting round with no detected amount → Fold
+    } else if (!isPreflop && currentOffset >= 0 && offset < currentOffset) {
+      // Post-flop: player came before current actor with no bet → Fold
       action = "fold"
     }
 
@@ -577,8 +661,10 @@ export async function extractPokerPlayers(
     }
   })
 
-  // 7. OCR hole card ranks + detect suits
-  const rankWorker = cardRankRegions.length > 0 ? await getRankWorker() : null
+  // 8. OCR hole card ranks + detect suits (R1, R2)
+  const needRankWorker =
+    cardRankRegions.length > 0 || communityRankRegions.length > 0
+  const rankWorker = needRankWorker ? await getRankWorker() : null
   const holeCards: [HoleCard, HoleCard] = [
     { rank: null, suit: null },
     { rank: null, suit: null },
@@ -594,5 +680,23 @@ export async function extractPokerPlayers(
     }
   }
 
-  return { players, totalPot, holeCards }
+  // 9. OCR community card ranks + detect suits (R3-R7)
+  //    Use rank OCR as the presence gate: if no valid rank is returned, stop.
+  //    (detectCardPresence is used only for street detection above.)
+  const communityCards: HoleCard[] = []
+  for (let i = 0; i < communityRankRegions.length; i++) {
+    const card: HoleCard = { rank: null, suit: null }
+    if (rankWorker && communityRankRegions[i]) {
+      const preprocessed = cropAndPreprocessRank(frame, communityRankRegions[i])
+      const { data } = await rankWorker.recognize(preprocessed)
+      card.rank = parseRank(data.text)
+    }
+    if (card.rank === null) break // no valid rank → card not dealt yet → stop
+    if (communitySuitRegions[i]) {
+      card.suit = detectSuit(cropToRegion(frame, communitySuitRegions[i]))
+    }
+    communityCards.push(card)
+  }
+
+  return { players, totalPot, holeCards, communityCards, street }
 }

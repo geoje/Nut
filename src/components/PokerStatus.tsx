@@ -1,11 +1,13 @@
 import { RefreshCw } from "lucide-react"
-import type { PlayerInfo, HoleCard } from "@/lib/poker-ocr"
+import type { PlayerInfo, HoleCard, Street } from "@/lib/poker-ocr"
 
 interface PokerStatusProps {
   players?: PlayerInfo[]
   isAnalyzing?: boolean
   totalPot?: number | null
   holeCards?: [HoleCard, HoleCard]
+  communityCards?: HoleCard[]
+  street?: Street
 }
 
 function PlayerTable({ players }: { players: PlayerInfo[] }) {
@@ -30,19 +32,11 @@ function PlayerTable({ players }: { players: PlayerInfo[] }) {
           <tr
             key={i}
             className={`border-b border-border/50 last:border-0 ${
-              p.isTurn ? "bg-yellow-400/10" : p.isMe ? "bg-primary/5" : ""
+              p.isMe ? "bg-muted/60" : ""
             }`}
           >
             <td className="px-3 py-2 font-medium">
               <span className="inline-flex items-center gap-1">
-                {p.isTurn && (
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-yellow-400/80 text-[9px] font-bold text-black ring-1 ring-yellow-400">
-                    ★
-                  </span>
-                )}
-                {!p.isTurn && p.isMe && (
-                  <span className="text-[10px] text-muted-foreground">▷</span>
-                )}
                 {p.position === "BTN" ? (
                   <span className="inline-flex items-center gap-1">
                     <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-black ring-1 ring-border">
@@ -61,7 +55,9 @@ function PlayerTable({ players }: { players: PlayerInfo[] }) {
               {p.bb !== null ? `${p.bb} BB` : "—"}
             </td>
             <td className="px-3 py-2 text-right tabular-nums">
-              {p.action === "fold" ? (
+              {p.isTurn ? (
+                <span className="font-semibold text-yellow-500">Turn</span>
+              ) : p.action === "fold" ? (
                 <span className="text-muted-foreground/50">Fold</span>
               ) : p.action !== null ? (
                 `${p.action} BB`
@@ -85,6 +81,27 @@ export function PokerStatus({
   const left = players.slice(0, 4)
   const right = players.slice(4, 8)
 
+  const hasHoleCards =
+    holeCards &&
+    (holeCards[0].rank ||
+      holeCards[0].suit ||
+      holeCards[1].rank ||
+      holeCards[1].suit)
+
+  const CardChip = ({ card, label }: { card: HoleCard; label?: string }) => {
+    const isRed = card.suit === "\u2665" || card.suit === "\u2666"
+    return (
+      <span
+        title={label}
+        className="inline-flex h-8 min-w-[1.75rem] items-center justify-center rounded border border-border bg-white px-1 font-bold shadow-sm"
+        style={{ color: isRed ? "#dc2626" : "#111", fontSize: "0.85rem" }}
+      >
+        {card.rank === "T" ? "10" : (card.rank ?? "?")}
+        {card.suit ?? ""}
+      </span>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -93,30 +110,13 @@ export function PokerStatus({
           {isAnalyzing && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
         </span>
         <div className="flex items-center gap-2">
-          {holeCards &&
-            (holeCards[0].rank ||
-              holeCards[0].suit ||
-              holeCards[1].rank ||
-              holeCards[1].suit) && (
-              <div className="flex items-center gap-1">
-                {holeCards.map((card, i) => {
-                  const isRed = card.suit === "\u2665" || card.suit === "\u2666"
-                  return (
-                    <span
-                      key={i}
-                      className="inline-flex h-8 min-w-[1.75rem] items-center justify-center rounded border border-border bg-white px-1 font-bold shadow-sm"
-                      style={{
-                        color: isRed ? "#dc2626" : "#111",
-                        fontSize: "0.85rem",
-                      }}
-                    >
-                      {card.rank === "T" ? "10" : (card.rank ?? "?")}
-                      {card.suit ?? ""}
-                    </span>
-                  )
-                })}
-              </div>
-            )}
+          {hasHoleCards && (
+            <div className="flex items-center gap-1">
+              {holeCards!.map((card, i) => (
+                <CardChip key={i} card={card} label={`R${i + 1}`} />
+              ))}
+            </div>
+          )}
           <span
             className="w-24 text-right text-xs font-semibold"
             style={{
