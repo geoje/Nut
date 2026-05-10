@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { ExternalLink, KeyRound, Trash2 } from "lucide-react"
-import { saveApiKey, removeApiKey } from "@/lib/gemini"
+import { saveApiKey, removeApiKey } from "@/lib/groq"
 
 interface ApiKeyInputProps {
   hasKey: boolean

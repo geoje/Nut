@@ -1,15 +1,39 @@
-import { useState, useCallback } from "react"
+import { useState, useCallback, useRef } from "react"
 import { ScreenShare } from "@/components/ScreenShare"
 import { PokerStatus } from "@/components/PokerStatus"
 import { AiChat, type ChatMessage } from "@/components/AiChat"
 import { PromptInput } from "@/components/PromptInput"
 import { ApiKeyInput } from "@/components/ApiKeyInput"
-import { getApiKey, streamChat } from "@/lib/gemini"
+import { getApiKey, streamChat } from "@/lib/groq"
+import {
+  extractPokerPlayers,
+  type PlayerInfo,
+  type OcrRegions,
+} from "@/lib/poker-ocr"
 
 export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [hasKey, setHasKey] = useState(() => !!getApiKey())
+  const [players, setPlayers] = useState<PlayerInfo[]>([])
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const ocrRegionsRef = useRef<OcrRegions>({ dealerRegions: [], bbRegions: [] })
+
+  const handleRegionsChange = useCallback((regions: OcrRegions) => {
+    ocrRegionsRef.current = regions
+  }, [])
+
+  const handleCapture = useCallback(async (canvas: HTMLCanvasElement) => {
+    setIsAnalyzing(true)
+    try {
+      const result = await extractPokerPlayers(canvas, ocrRegionsRef.current)
+      setPlayers(result)
+    } catch (e) {
+      void e
+    } finally {
+      setIsAnalyzing(false)
+    }
+  }, [])
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -60,7 +84,10 @@ export function App() {
     <div className="flex h-screen w-screen overflow-hidden bg-background">
       {/* Left: Screen share */}
       <div className="flex h-full max-w-[50%] min-w-0 flex-1 flex-col p-3">
-        <ScreenShare />
+        <ScreenShare
+          onCapture={handleCapture}
+          onRegionsChange={handleRegionsChange}
+        />
       </div>
 
       {/* Divider */}
@@ -69,8 +96,8 @@ export function App() {
       {/* Right: Poker status / AI chat / Prompt input */}
       <div className="flex h-full w-0 flex-1 flex-col gap-0 overflow-hidden">
         {/* Poker status */}
-        <div className="min-h-0 shrink-0 basis-[30%] overflow-hidden border-b border-border p-3">
-          <PokerStatus />
+        <div className="shrink overflow-hidden border-b border-border p-3">
+          <PokerStatus players={players} isAnalyzing={isAnalyzing} />
         </div>
 
         {/* AI chat */}
