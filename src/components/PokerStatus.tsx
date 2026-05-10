@@ -35,22 +35,15 @@ function PlayerTable({ players }: { players: PlayerInfo[] }) {
               p.isMe ? "bg-muted/60" : ""
             }`}
           >
-            <td className="px-3 py-2 font-medium">
+            <td
+              className={`px-3 py-2 font-medium ${p.action === "fold" ? "text-muted-foreground/40" : ""}`}
+            >
               <span className="inline-flex items-center gap-1">
-                {p.position === "BTN" ? (
-                  <span className="inline-flex items-center gap-1">
-                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-black ring-1 ring-border">
-                      D
-                    </span>
-                    BTN
-                  </span>
-                ) : (
-                  p.position
-                )}
+                {p.position}
               </span>
             </td>
             <td
-              className={`px-3 py-2 text-right tabular-nums${p.bbStale ? "text-muted-foreground/50" : ""}`}
+              className={`px-3 py-2 text-right tabular-nums ${p.action === "fold" ? "text-muted-foreground/40" : p.bbStale ? "text-muted-foreground/50" : ""}`}
             >
               {p.bb !== null ? `${p.bb} BB` : "—"}
             </td>
@@ -61,6 +54,8 @@ function PlayerTable({ players }: { players: PlayerInfo[] }) {
                 <span className="text-muted-foreground/50">Fold</span>
               ) : p.action !== null ? (
                 `${p.action} BB`
+              ) : p.hasActed ? (
+                <span className="text-blue-400">Check</span>
               ) : (
                 ""
               )}
@@ -105,11 +100,15 @@ export function PokerStatus({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-          Poker Status
-          {isAnalyzing && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-        </span>
         <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-muted-foreground">
+            Poker Status
+          </span>
+          {totalPot !== null && totalPot !== undefined && (
+            <span className="rounded bg-orange-400/20 px-2 py-0.5 text-xs font-semibold text-orange-600">
+              Pot: {totalPot} BB
+            </span>
+          )}
           {hasHoleCards && (
             <div className="flex items-center gap-1">
               {holeCards!.map((card, i) => (
@@ -117,20 +116,10 @@ export function PokerStatus({
               ))}
             </div>
           )}
-          <span
-            className="w-24 text-right text-xs font-semibold"
-            style={{
-              color:
-                totalPot !== null && totalPot !== undefined
-                  ? undefined
-                  : "transparent",
-            }}
-          >
-            <span className="rounded bg-orange-400/20 px-2 py-0.5 text-orange-600">
-              Pot: {totalPot ?? 0} BB
-            </span>
-          </span>
         </div>
+        {isAnalyzing && (
+          <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        )}
       </div>
       {players.length === 0 ? (
         <div className="flex items-center justify-center rounded-lg border border-border py-4">

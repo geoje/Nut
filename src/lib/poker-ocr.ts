@@ -7,6 +7,7 @@ export interface PlayerInfo {
   action: "fold" | number | null // "fold", bet amount, or null (not yet acted)
   isMe: boolean
   isTurn: boolean
+  hasActed: boolean // turn has already passed this player this street
 }
 
 export type CardRank =
@@ -338,10 +339,6 @@ function detectActiveSeatByBrightness(
   })
   const min = Math.min(...ratios)
   const minIdx = ratios.indexOf(min)
-  console.log(
-    "[gray≥150]",
-    ratios.map((s, i) => `seat${i}:${(s * 100).toFixed(1)}%`).join(" | ")
-  )
   // Turn seat has near-zero bright pixels (<1%). Non-turn seats show name text (≥2%).
   return min < 0.01 ? minIdx : -1
 }
@@ -490,6 +487,71 @@ function detectSuit(canvas: HTMLCanvasElement): CardSuit {
 }
 
 // ---------------------------------------------------------------------------
+// Fold detection
+// ---------------------------------------------------------------------------
+
+// My fold: hole card background turns dark (~107 lum) when folded, white (~232) when active.
+function detectMyFold(
+  frame: HTMLCanvasElement,
+  cardRankRegions: Region[]
+): boolean {
+  if (cardRankRegions.length === 0) return false
+  const r = cardRankRegions[0]
+  const x = Math.max(0, Math.round(r.x * frame.width))
+  const y = Math.max(0, Math.round(r.y * frame.height))
+  const w = Math.min(
+    frame.width - x,
+    Math.max(1, Math.round(r.w * frame.width))
+  )
+  const h = Math.min(
+    frame.height - y,
+    Math.max(1, Math.round(r.h * frame.height))
+  )
+  const ctx = frame.getContext("2d")
+  if (!ctx) return false
+  const { data } = ctx.getImageData(x, y, w, h)
+  let sum = 0,
+    count = 0
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue
+    sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+    count++
+  }
+  if (count === 0) return false
+  // Active: avg lum ~232. Folded: avg lum ~107. Threshold at 150.
+  return sum / count < 150
+}
+
+// Other player fold: max luminance in stack region drops when folded.
+// Active max lum ≈ 153 (RGB 108,167,200). Folded max lum ≈ 104 (RGB 81,112,124).
+function detectFoldByStackBrightness(
+  frame: HTMLCanvasElement,
+  bbRegion: Region
+): boolean {
+  const x = Math.max(0, Math.round(bbRegion.x * frame.width))
+  const y = Math.max(0, Math.round(bbRegion.y * frame.height))
+  const w = Math.min(
+    frame.width - x,
+    Math.max(1, Math.round(bbRegion.w * frame.width))
+  )
+  const h = Math.min(
+    frame.height - y,
+    Math.max(1, Math.round(bbRegion.h * frame.height))
+  )
+  const ctx = frame.getContext("2d")
+  if (!ctx) return false
+  const { data } = ctx.getImageData(x, y, w, h)
+  let maxLum = 0
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] < 128) continue
+    const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]
+    if (lum > maxLum) maxLum = lum
+  }
+  // Folded: max ≈ 104. Active: max ≈ 153. Threshold at 130.
+  return maxLum < 130
+}
+
+// ---------------------------------------------------------------------------
 // Detect whether a region contains a visible card
 // Criteria: avg luminance > 180 (white-ish bg) AND ≥5% foreground pixels
 // ---------------------------------------------------------------------------
@@ -621,14 +683,11 @@ export async function extractPokerPlayers(
     else if (communityPresence[3]) street = "turn"
     else street = "flop"
   }
-  const isPreflop = street === "preflop"
-
   // 7. Build ordered player list (clockwise from BTN)
   const posLabels =
     POSITIONS[n] ?? Array.from({ length: n }, (_, i) => `Seat ${i + 1}`)
 
-  // Convert currentSeatIdx (raw region index) to output offset for correct
-  // circular comparison. e.g. dealerIdx=5, currentSeatIdx=7 → currentOffset=2
+  // currentOffset: position of the turn player in the output order (0=BTN)
   const currentOffset =
     currentSeatIdx >= 0
       ? dealerIdx >= 0
@@ -636,9 +695,6 @@ export async function extractPokerPlayers(
         : currentSeatIdx
       : -1
 
-  // BB is at offset=2 (BTN=0, SB=1, BB=2) — last to act preflop.
-  // Preflop: auto-fold inference is unreliable (BB hasn't acted yet when
-  // it's UTG's turn), so skip it entirely on preflop.
   const players: PlayerInfo[] = Array.from({ length: n }, (_, offset) => {
     const seatIdx = dealerIdx >= 0 ? (dealerIdx + offset) % n : offset
 
@@ -647,9 +703,17 @@ export async function extractPokerPlayers(
     let action: "fold" | number | null = null
     if (detectedAmount !== null) {
       action = detectedAmount
-    } else if (!isPreflop && currentOffset >= 0 && offset < currentOffset) {
-      // Post-flop: player came before current actor with no bet → Fold
-      action = "fold"
+    } else {
+      // Detect fold by pixel brightness:
+      // Me (seat 0): card region turns dark when folded (~107 lum) vs active (~232)
+      // Others: stack region max brightness drops when folded (~104) vs active (~153)
+      const isFolded =
+        seatIdx === 0
+          ? detectMyFold(frame, cardRankRegions)
+          : bbRegions[seatIdx]
+            ? detectFoldByStackBrightness(frame, bbRegions[seatIdx])
+            : false
+      if (isFolded) action = "fold"
     }
 
     return {
@@ -658,6 +722,7 @@ export async function extractPokerPlayers(
       action,
       isMe: seatIdx === 0,
       isTurn: seatIdx === currentSeatIdx,
+      hasActed: currentOffset >= 0 && offset < currentOffset,
     }
   })
 
