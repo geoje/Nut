@@ -9,6 +9,8 @@ import {
   DollarSign,
   Zap,
   User,
+  Type,
+  Layers,
 } from "lucide-react"
 import type { OcrRegions, Region } from "@/lib/poker-ocr"
 
@@ -19,7 +21,17 @@ interface ScreenShareProps {
   onRegionsChange?: (regions: OcrRegions) => void
 }
 
-type SelectMode = "dealer" | "bb" | "total" | "action" | "name" | null
+type SelectMode =
+  | "dealer"
+  | "bb"
+  | "total"
+  | "action"
+  | "name"
+  | "cardRank"
+  | "cardSuit"
+  | null
+
+const MAX_CARDS = 2
 
 interface DragState {
   startX: number
@@ -40,6 +52,8 @@ function loadRegions(): {
   totalRegion: Region | null
   actionRegions: Region[]
   nameRegions: Region[]
+  cardRankRegions: Region[]
+  cardSuitRegions: Region[]
 } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -50,6 +64,8 @@ function loadRegions(): {
         totalRegion: null,
         actionRegions: [],
         nameRegions: [],
+        cardRankRegions: [],
+        cardSuitRegions: [],
       }
     const parsed = JSON.parse(raw)
     return {
@@ -62,6 +78,12 @@ function loadRegions(): {
         ? parsed.actionRegions
         : [],
       nameRegions: Array.isArray(parsed.nameRegions) ? parsed.nameRegions : [],
+      cardRankRegions: Array.isArray(parsed.cardRankRegions)
+        ? parsed.cardRankRegions
+        : [],
+      cardSuitRegions: Array.isArray(parsed.cardSuitRegions)
+        ? parsed.cardSuitRegions
+        : [],
     }
   } catch {
     return {
@@ -70,6 +92,8 @@ function loadRegions(): {
       totalRegion: null,
       actionRegions: [],
       nameRegions: [],
+      cardRankRegions: [],
+      cardSuitRegions: [],
     }
   }
 }
@@ -79,7 +103,9 @@ function saveRegions(
   bbs: Region[],
   total: Region | null,
   actions: Region[],
-  names: Region[]
+  names: Region[],
+  cardRanks: Region[],
+  cardSuits: Region[]
 ) {
   localStorage.setItem(
     STORAGE_KEY,
@@ -89,6 +115,8 @@ function saveRegions(
       totalRegion: total,
       actionRegions: actions,
       nameRegions: names,
+      cardRankRegions: cardRanks,
+      cardSuitRegions: cardSuits,
     })
   )
 }
@@ -139,6 +167,12 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
   const [nameRegions, setNameRegions] = useState<Region[]>(
     () => loadRegions().nameRegions
   )
+  const [cardRankRegions, setCardRankRegions] = useState<Region[]>(
+    () => loadRegions().cardRankRegions
+  )
+  const [cardSuitRegions, setCardSuitRegions] = useState<Region[]>(
+    () => loadRegions().cardSuitRegions
+  )
   const [videoOffset, setVideoOffset] = useState<{
     x: number
     y: number
@@ -152,15 +186,19 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
       bbs: Region[],
       total: Region | null,
       actions: Region[],
-      names: Region[]
+      names: Region[],
+      cardRanks: Region[],
+      cardSuits: Region[]
     ) => {
-      saveRegions(dealers, bbs, total, actions, names)
+      saveRegions(dealers, bbs, total, actions, names, cardRanks, cardSuits)
       onRegionsChange?.({
         dealerRegions: dealers,
         bbRegions: bbs,
         totalRegion: total ?? undefined,
         actionRegions: actions,
         nameRegions: names,
+        cardRankRegions: cardRanks,
+        cardSuitRegions: cardSuits,
       })
     },
     [onRegionsChange]
@@ -174,6 +212,8 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
       totalRegion: totalRegion ?? undefined,
       actionRegions,
       nameRegions,
+      cardRankRegions,
+      cardSuitRegions,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -278,7 +318,15 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
               ? [...prev, region]
               : [...prev.slice(0, -1), region]
           )
-          emitRegions(next, bbRegions, totalRegion, actionRegions, nameRegions)
+          emitRegions(
+            next,
+            bbRegions,
+            totalRegion,
+            actionRegions,
+            nameRegions,
+            cardRankRegions,
+            cardSuitRegions
+          )
           if (next.length >= MAX_PLAYERS) setSelectMode(null)
           return next
         })
@@ -294,7 +342,9 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
             next,
             totalRegion,
             actionRegions,
-            nameRegions
+            nameRegions,
+            cardRankRegions,
+            cardSuitRegions
           )
           if (next.length >= MAX_PLAYERS) setSelectMode(null)
           return next
@@ -306,7 +356,9 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
           bbRegions,
           region,
           actionRegions,
-          nameRegions
+          nameRegions,
+          cardRankRegions,
+          cardSuitRegions
         )
         setSelectMode(null)
       } else if (selectMode === "action") {
@@ -316,7 +368,15 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
               ? [...prev, region]
               : [...prev.slice(0, -1), region]
           )
-          emitRegions(dealerRegions, bbRegions, totalRegion, next, nameRegions)
+          emitRegions(
+            dealerRegions,
+            bbRegions,
+            totalRegion,
+            next,
+            nameRegions,
+            cardRankRegions,
+            cardSuitRegions
+          )
           if (next.length >= MAX_PLAYERS) setSelectMode(null)
           return next
         })
@@ -332,9 +392,47 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
             bbRegions,
             totalRegion,
             actionRegions,
-            next
+            next,
+            cardRankRegions,
+            cardSuitRegions
           )
           if (next.length >= MAX_PLAYERS) setSelectMode(null)
+          return next
+        })
+      } else if (selectMode === "cardRank") {
+        setCardRankRegions((prev) => {
+          const next =
+            prev.length < MAX_CARDS
+              ? [...prev, region]
+              : [...prev.slice(0, -1), region]
+          emitRegions(
+            dealerRegions,
+            bbRegions,
+            totalRegion,
+            actionRegions,
+            nameRegions,
+            next,
+            cardSuitRegions
+          )
+          if (next.length >= MAX_CARDS) setSelectMode(null)
+          return next
+        })
+      } else if (selectMode === "cardSuit") {
+        setCardSuitRegions((prev) => {
+          const next =
+            prev.length < MAX_CARDS
+              ? [...prev, region]
+              : [...prev.slice(0, -1), region]
+          emitRegions(
+            dealerRegions,
+            bbRegions,
+            totalRegion,
+            actionRegions,
+            nameRegions,
+            cardRankRegions,
+            next
+          )
+          if (next.length >= MAX_CARDS) setSelectMode(null)
           return next
         })
       }
@@ -348,18 +446,46 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
     totalRegion,
     actionRegions,
     nameRegions,
+    cardRankRegions,
+    cardSuitRegions,
     emitRegions,
   ])
 
   const removeRegion = useCallback(
-    (type: "dealer" | "bb" | "total" | "action" | "name", idx?: number) => {
+    (
+      type:
+        | "dealer"
+        | "bb"
+        | "total"
+        | "action"
+        | "name"
+        | "cardRank"
+        | "cardSuit",
+      idx?: number
+    ) => {
       if (type === "total") {
         setTotalRegion(null)
-        emitRegions(dealerRegions, bbRegions, null, actionRegions, nameRegions)
+        emitRegions(
+          dealerRegions,
+          bbRegions,
+          null,
+          actionRegions,
+          nameRegions,
+          cardRankRegions,
+          cardSuitRegions
+        )
       } else if (type === "dealer") {
         setDealerRegions((prev) => {
           const next = sortClockwise(prev.filter((_, i) => i !== idx))
-          emitRegions(next, bbRegions, totalRegion, actionRegions, nameRegions)
+          emitRegions(
+            next,
+            bbRegions,
+            totalRegion,
+            actionRegions,
+            nameRegions,
+            cardRankRegions,
+            cardSuitRegions
+          )
           return next
         })
       } else if (type === "bb") {
@@ -370,14 +496,24 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
             next,
             totalRegion,
             actionRegions,
-            nameRegions
+            nameRegions,
+            cardRankRegions,
+            cardSuitRegions
           )
           return next
         })
       } else if (type === "action") {
         setActionRegions((prev) => {
           const next = sortClockwise(prev.filter((_, i) => i !== idx))
-          emitRegions(dealerRegions, bbRegions, totalRegion, next, nameRegions)
+          emitRegions(
+            dealerRegions,
+            bbRegions,
+            totalRegion,
+            next,
+            nameRegions,
+            cardRankRegions,
+            cardSuitRegions
+          )
           return next
         })
       } else if (type === "name") {
@@ -388,6 +524,36 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
             bbRegions,
             totalRegion,
             actionRegions,
+            next,
+            cardRankRegions,
+            cardSuitRegions
+          )
+          return next
+        })
+      } else if (type === "cardRank") {
+        setCardRankRegions((prev) => {
+          const next = prev.filter((_, i) => i !== idx)
+          emitRegions(
+            dealerRegions,
+            bbRegions,
+            totalRegion,
+            actionRegions,
+            nameRegions,
+            next,
+            cardSuitRegions
+          )
+          return next
+        })
+      } else if (type === "cardSuit") {
+        setCardSuitRegions((prev) => {
+          const next = prev.filter((_, i) => i !== idx)
+          emitRegions(
+            dealerRegions,
+            bbRegions,
+            totalRegion,
+            actionRegions,
+            nameRegions,
+            cardRankRegions,
             next
           )
           return next
@@ -400,6 +566,8 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
       totalRegion,
       actionRegions,
       nameRegions,
+      cardRankRegions,
+      cardSuitRegions,
       emitRegions,
     ]
   )
@@ -410,12 +578,16 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
     setTotalRegion(null)
     setActionRegions([])
     setNameRegions([])
+    setCardRankRegions([])
+    setCardSuitRegions([])
     onRegionsChange?.({
       dealerRegions: [],
       bbRegions: [],
       totalRegion: undefined,
       actionRegions: [],
       nameRegions: [],
+      cardRankRegions: [],
+      cardSuitRegions: [],
     })
     setSelectMode(null)
   }, [onRegionsChange])
@@ -496,14 +668,20 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
           ? "border-purple-400 bg-purple-400/20"
           : selectMode === "name"
             ? "border-blue-400 bg-blue-400/20"
-            : "border-yellow-400 bg-yellow-400/20"
+            : selectMode === "cardRank"
+              ? "border-rose-400 bg-rose-400/20"
+              : selectMode === "cardSuit"
+                ? "border-cyan-400 bg-cyan-400/20"
+                : "border-yellow-400 bg-yellow-400/20"
 
   const anyRegion =
     dealerRegions.length > 0 ||
     bbRegions.length > 0 ||
     totalRegion !== null ||
     actionRegions.length > 0 ||
-    nameRegions.length > 0
+    nameRegions.length > 0 ||
+    cardRankRegions.length > 0 ||
+    cardSuitRegions.length > 0
 
   // hintText removed (hints no longer shown)
 
@@ -573,6 +751,32 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
               >
                 <User className="mr-1.5 h-3.5 w-3.5" />
                 Name{nameRegions.length > 0 && ` (${nameRegions.length})`}
+              </Button>
+              <Button
+                size="sm"
+                variant={selectMode === "cardRank" ? "default" : "outline"}
+                onClick={() =>
+                  setSelectMode((m) => (m === "cardRank" ? null : "cardRank"))
+                }
+                disabled={cardRankRegions.length >= MAX_CARDS}
+                title="내 카드 랭크 OCR"
+              >
+                <Type className="mr-1.5 h-3.5 w-3.5" />
+                Rank
+                {cardRankRegions.length > 0 && ` (${cardRankRegions.length})`}
+              </Button>
+              <Button
+                size="sm"
+                variant={selectMode === "cardSuit" ? "default" : "outline"}
+                onClick={() =>
+                  setSelectMode((m) => (m === "cardSuit" ? null : "cardSuit"))
+                }
+                disabled={cardSuitRegions.length >= MAX_CARDS}
+                title="내 카드 문양 감지"
+              >
+                <Layers className="mr-1.5 h-3.5 w-3.5" />
+                Suit
+                {cardSuitRegions.length > 0 && ` (${cardSuitRegions.length})`}
               </Button>
               {anyRegion && (
                 <Button
@@ -658,6 +862,22 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
                   <div
                     key={`name-rect-${i}`}
                     className="pointer-events-none absolute border-2 border-blue-400 bg-blue-400/10"
+                    style={regionPx(r, videoOffset)}
+                  />
+                ))}
+              {videoOffset &&
+                cardRankRegions.map((r, i) => (
+                  <div
+                    key={`cardRank-rect-${i}`}
+                    className="pointer-events-none absolute border-2 border-rose-400 bg-rose-400/10"
+                    style={regionPx(r, videoOffset)}
+                  />
+                ))}
+              {videoOffset &&
+                cardSuitRegions.map((r, i) => (
+                  <div
+                    key={`cardSuit-rect-${i}`}
+                    className="pointer-events-none absolute border-2 border-cyan-400 bg-cyan-400/10"
                     style={regionPx(r, videoOffset)}
                   />
                 ))}
@@ -772,6 +992,50 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
                         onMouseDown={(e) => {
                           e.stopPropagation()
                           removeRegion("name", i)
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )
+                })}
+              {videoOffset &&
+                cardRankRegions.map((r, i) => {
+                  const px = regionPx(r, videoOffset)
+                  return (
+                    <span
+                      key={`cardRank-label-${i}`}
+                      className="absolute z-10 flex items-center gap-0.5 rounded bg-rose-400/50 px-1 text-[10px] font-semibold text-white backdrop-blur-[1px]"
+                      style={{ left: px.left, top: px.top - 20 }}
+                    >
+                      R{i + 1}
+                      <button
+                        className="pointer-events-auto ml-0.5 opacity-70 hover:opacity-100"
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          removeRegion("cardRank", i)
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )
+                })}
+              {videoOffset &&
+                cardSuitRegions.map((r, i) => {
+                  const px = regionPx(r, videoOffset)
+                  return (
+                    <span
+                      key={`cardSuit-label-${i}`}
+                      className="absolute z-10 flex items-center gap-0.5 rounded bg-cyan-400/50 px-1 text-[10px] font-semibold text-black backdrop-blur-[1px]"
+                      style={{ left: px.left, top: px.top - 20 }}
+                    >
+                      S{i + 1}
+                      <button
+                        className="pointer-events-auto ml-0.5 opacity-70 hover:opacity-100"
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          removeRegion("cardSuit", i)
                         }}
                       >
                         ×

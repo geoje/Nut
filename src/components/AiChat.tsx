@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react"
 import { Bot, User } from "lucide-react"
+import Markdown from "react-markdown"
 
 export interface ChatMessage {
   role: "user" | "assistant"
@@ -44,13 +45,56 @@ export function AiChat({ messages, isLoading }: AiChatProps) {
                 )}
               </div>
               <div
-                className={`max-w-[80%] min-w-0 rounded-lg px-3 py-2 text-sm break-words whitespace-pre-wrap ${
+                className={`max-w-[80%] min-w-0 rounded-lg px-3 py-2 text-sm break-words ${
                   msg.role === "user"
-                    ? "bg-primary text-primary-foreground"
+                    ? "bg-primary whitespace-pre-wrap text-primary-foreground"
                     : "bg-muted text-foreground"
                 }`}
               >
-                {msg.content}
+                {msg.role === "user" ? (
+                  msg.content
+                ) : (
+                  <Markdown
+                    components={{
+                      p: ({ children }) => (
+                        <p className="mb-1 last:mb-0">{children}</p>
+                      ),
+                      strong: ({ children }) => (
+                        <strong className="font-semibold">{children}</strong>
+                      ),
+                      em: ({ children }) => (
+                        <em className="italic">{children}</em>
+                      ),
+                      ul: ({ children }) => (
+                        <ul className="mb-1 ml-4 list-disc">{children}</ul>
+                      ),
+                      ol: ({ children }) => (
+                        <ol className="mb-1 ml-4 list-decimal">{children}</ol>
+                      ),
+                      li: ({ children }) => (
+                        <li className="mb-0.5">{children}</li>
+                      ),
+                      code: ({ children }) => (
+                        <code className="rounded bg-black/10 px-1 py-0.5 font-mono text-xs dark:bg-white/10">
+                          {children}
+                        </code>
+                      ),
+                      h1: ({ children }) => (
+                        <h1 className="mb-1 text-base font-bold">{children}</h1>
+                      ),
+                      h2: ({ children }) => (
+                        <h2 className="mb-1 text-sm font-bold">{children}</h2>
+                      ),
+                      h3: ({ children }) => (
+                        <h3 className="mb-1 text-sm font-semibold">
+                          {children}
+                        </h3>
+                      ),
+                    }}
+                  >
+                    {msg.content}
+                  </Markdown>
+                )}
                 {isLoading &&
                   i === messages.length - 1 &&
                   msg.role === "assistant" && (

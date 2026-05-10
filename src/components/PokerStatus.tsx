@@ -1,10 +1,11 @@
 import { RefreshCw } from "lucide-react"
-import type { PlayerInfo } from "@/lib/poker-ocr"
+import type { PlayerInfo, HoleCard } from "@/lib/poker-ocr"
 
 interface PokerStatusProps {
   players?: PlayerInfo[]
   isAnalyzing?: boolean
   totalPot?: number | null
+  holeCards?: [HoleCard, HoleCard]
 }
 
 function PlayerTable({ players }: { players: PlayerInfo[] }) {
@@ -79,6 +80,7 @@ export function PokerStatus({
   players = [],
   isAnalyzing = false,
   totalPot,
+  holeCards,
 }: PokerStatusProps) {
   const left = players.slice(0, 4)
   const right = players.slice(4, 8)
@@ -91,6 +93,30 @@ export function PokerStatus({
           {isAnalyzing && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
         </span>
         <div className="flex items-center gap-2">
+          {holeCards &&
+            (holeCards[0].rank ||
+              holeCards[0].suit ||
+              holeCards[1].rank ||
+              holeCards[1].suit) && (
+              <div className="flex items-center gap-1">
+                {holeCards.map((card, i) => {
+                  const isRed = card.suit === "\u2665" || card.suit === "\u2666"
+                  return (
+                    <span
+                      key={i}
+                      className="inline-flex h-8 min-w-[1.75rem] items-center justify-center rounded border border-border bg-white px-1 font-bold shadow-sm"
+                      style={{
+                        color: isRed ? "#dc2626" : "#111",
+                        fontSize: "0.85rem",
+                      }}
+                    >
+                      {card.rank === "T" ? "10" : (card.rank ?? "?")}
+                      {card.suit ?? ""}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
           <span
             className="w-24 text-right text-xs font-semibold"
             style={{

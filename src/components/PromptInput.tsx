@@ -1,13 +1,14 @@
 import { useRef } from "react"
 import { Button } from "@/components/ui/button"
-import { SendHorizontal } from "lucide-react"
+import { SendHorizontal, Zap } from "lucide-react"
 
 interface PromptInputProps {
   onSend: (text: string) => void
+  onAnalyze?: () => void
   disabled?: boolean
 }
 
-export function PromptInput({ onSend, disabled }: PromptInputProps) {
+export function PromptInput({ onSend, onAnalyze, disabled }: PromptInputProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const handleSend = () => {
@@ -45,6 +46,17 @@ export function PromptInput({ onSend, disabled }: PromptInputProps) {
           <SendHorizontal className="h-4 w-4" />
         </Button>
       </div>
+      {onAnalyze && (
+        <Button
+          variant="secondary"
+          onClick={onAnalyze}
+          disabled={disabled}
+          className="w-full gap-2"
+        >
+          <Zap className="h-4 w-4" />
+          Analyze Current Hand
+        </Button>
+      )}
     </div>
   )
 }

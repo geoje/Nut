@@ -9,6 +9,7 @@ import {
   extractPokerPlayers,
   type PlayerInfo,
   type OcrRegions,
+  type HoleCard,
 } from "@/lib/poker-ocr"
 
 export function App() {
@@ -18,6 +19,10 @@ export function App() {
   const [players, setPlayers] = useState<PlayerInfo[]>([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [totalPot, setTotalPot] = useState<number | null>(null)
+  const [holeCards, setHoleCards] = useState<[HoleCard, HoleCard]>([
+    { rank: null, suit: null },
+    { rank: null, suit: null },
+  ])
   const prevPlayersRef = useRef<PlayerInfo[]>([])
   const ocrRegionsRef = useRef<OcrRegions>({
     dealerRegions: [],
@@ -25,6 +30,8 @@ export function App() {
     totalRegion: undefined,
     actionRegions: [],
     nameRegions: [],
+    cardRankRegions: [],
+    cardSuitRegions: [],
   })
 
   const handleRegionsChange = useCallback((regions: OcrRegions) => {
@@ -34,10 +41,11 @@ export function App() {
   const handleCapture = useCallback(async (canvas: HTMLCanvasElement) => {
     setIsAnalyzing(true)
     try {
-      const { players: result, totalPot: pot } = await extractPokerPlayers(
-        canvas,
-        ocrRegionsRef.current
-      )
+      const {
+        players: result,
+        totalPot: pot,
+        holeCards: cards,
+      } = await extractPokerPlayers(canvas, ocrRegionsRef.current)
       const prev = prevPlayersRef.current
       const merged = result.map((p, i) => {
         if (p.bb !== null) return p
@@ -47,6 +55,7 @@ export function App() {
       prevPlayersRef.current = merged
       setPlayers(merged)
       setTotalPot(pot)
+      setHoleCards(cards)
     } catch (e) {
       void e
     } finally {
@@ -65,7 +74,6 @@ export function App() {
       setMessages((prev) => [...prev, userMessage, assistantMessage])
       setIsLoading(true)
 
-      // Convert previous messages to Groq format
       const history = messages.map((m) => ({
         role: m.role === "user" ? ("user" as const) : ("assistant" as const),
         content: m.content,
@@ -99,6 +107,48 @@ export function App() {
     [messages]
   )
 
+  const buildPokerPrompt = useCallback(() => {
+    const cardStr = (rank: string | null, suit: string | null) =>
+      rank || suit ? `${rank ?? "?"}${suit ?? "?"}` : null
+
+    const c1 = cardStr(holeCards[0].rank, holeCards[0].suit)
+    const c2 = cardStr(holeCards[1].rank, holeCards[1].suit)
+    const holeStr = c1 && c2 ? `${c1} ${c2}` : (c1 ?? c2 ?? "(unknown)")
+    const potStr = totalPot !== null ? `${totalPot} BB` : "unknown"
+
+    const playerLines = players
+      .map((p) => {
+        const stack = p.bb !== null ? `${p.bb} BB` : "?"
+        const action =
+          p.action === "fold"
+            ? "folded"
+            : p.action !== null
+              ? `bet ${p.action} BB`
+              : p.isTurn
+                ? "(to act)"
+                : "(waiting)"
+        const tags = [p.isMe ? "[ME]" : "", p.isTurn ? "[TURN]" : ""]
+          .filter(Boolean)
+          .join(" ")
+        return `  ${p.position}${tags ? " " + tags : ""}: stack=${stack}, ${action}`
+      })
+      .join("\n")
+
+    return (
+      `My hole cards: ${holeStr}\n` +
+      `Pot: ${potStr}\n\n` +
+      `Players (clockwise from BTN):\n${playerLines}\n\n` +
+      `What is the optimal action and why? Consider pot odds, position, and hand strength.\n\n` +
+      `Respond in this exact format:\n` +
+      `**Action**: [Fold / Call / Raise X BB]\n` +
+      `**Reason**: [1-2 sentences max]`
+    )
+  }, [players, totalPot, holeCards])
+
+  const handleAnalyze = useCallback(() => {
+    handleSend(buildPokerPrompt())
+  }, [buildPokerPrompt, handleSend])
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background">
       {/* Left: Screen share */}
@@ -120,6 +170,7 @@ export function App() {
             players={players}
             isAnalyzing={isAnalyzing}
             totalPot={totalPot}
+            holeCards={holeCards}
           />
         </div>
 
@@ -134,7 +185,11 @@ export function App() {
             hasKey={hasKey}
             onKeyChange={() => setHasKey(!!getApiKey())}
           />
-          <PromptInput onSend={handleSend} disabled={isLoading || !hasKey} />
+          <PromptInput
+            onSend={handleSend}
+            onAnalyze={handleAnalyze}
+            disabled={isLoading || !hasKey}
+          />
         </div>
       </div>
     </div>
