@@ -1,8 +1,12 @@
 import { createWorker, PSM } from "tesseract.js"
 
 export interface PlayerInfo {
-  position: string // "BTN" | "SB" | "BB" | "UTG" | …
+  position: string
   bb: number | null
+  bbStale?: boolean // true when showing a previously detected value
+  action: "fold" | number | null // "fold", bet amount, or null (not yet acted)
+  isMe: boolean
+  isTurn: boolean
 }
 
 export interface Region {
@@ -14,8 +18,16 @@ export interface Region {
 
 // Each index is one seat slot (clockwise order, index 0–7)
 export interface OcrRegions {
-  dealerRegions: Region[] // up to 8 regions, one per seat, to detect dealer button
-  bbRegions: Region[] // up to 8 regions, one per seat, to OCR stack size
+  dealerRegions: Region[] // up to 8, detect dealer button color
+  bbRegions: Region[] // up to 8, OCR stack size
+  totalRegion?: Region // single region, OCR total pot
+  actionRegions: Region[] // up to 8, OCR current bet per player
+  nameRegions: Region[] // up to 8, detect whose turn (countdown timer)
+}
+
+export interface ExtractResult {
+  players: PlayerInfo[]
+  totalPot: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -121,44 +133,115 @@ function parseBB(text: string): number | null {
   return isNaN(v) ? null : v
 }
 
+// Returns true if text looks like a countdown timer (1–2 digit number)
+function isCountdownTimer(text: string): boolean {
+  return /^\d{1,2}$/.test(text.trim())
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 export async function extractPokerPlayers(
   frame: HTMLCanvasElement,
   regions?: OcrRegions
-): Promise<PlayerInfo[]> {
-  if (!regions) return []
+): Promise<ExtractResult> {
+  if (!regions) return { players: [], totalPot: null }
 
-  const { dealerRegions, bbRegions } = regions
-  if (bbRegions.length === 0) return []
+  const {
+    dealerRegions,
+    bbRegions,
+    totalRegion,
+    actionRegions = [],
+    nameRegions = [],
+  } = regions
+  if (bbRegions.length === 0) return { players: [], totalPot: null }
+
   const n = bbRegions.length
+  const bbWorker = await getBBWorker()
 
-  // Detect dealer seat (synchronous pixel scan — fast)
+  // 1. Detect dealer seat (pixel scan — fast, no OCR)
   let dealerIdx = -1
-  const scanCount = Math.min(dealerRegions.length, n)
-  for (let i = 0; i < scanCount; i++) {
+  for (let i = 0; i < Math.min(dealerRegions.length, n); i++) {
     if (isDealerButton(frame, dealerRegions[i])) {
       dealerIdx = i
       break
     }
   }
 
-  // OCR all BB regions in parallel
-  const bbWorker = await getBBWorker()
+  // 2. OCR all BB (stack) regions in parallel
   const bbValues = await Promise.all(
     bbRegions.map(async (r) => {
-      const crop = cropToRegion(frame, r)
-      const { data } = await bbWorker.recognize(crop)
+      const { data } = await bbWorker.recognize(cropToRegion(frame, r))
       return parseBB(data.text)
     })
   )
 
-  // Build player list in clockwise order starting from dealer (BTN)
+  // 3. OCR total pot region
+  let totalPot: number | null = null
+  if (totalRegion) {
+    const { data } = await bbWorker.recognize(cropToRegion(frame, totalRegion))
+    totalPot = parseBB(data.text)
+  }
+
+  // 4. OCR action regions (current bet per player)
+  const actionValues: (number | null)[] = await Promise.all(
+    actionRegions.slice(0, n).map(async (r) => {
+      const { data } = await bbWorker.recognize(cropToRegion(frame, r))
+      return parseBB(data.text)
+    })
+  )
+
+  // 5. Detect whose turn via name regions (countdown timer = pure 1–2 digit number)
+  let currentSeatIdx = -1
+  if (nameRegions.length > 0) {
+    const nameTexts = await Promise.all(
+      nameRegions.slice(0, n).map(async (r) => {
+        const { data } = await bbWorker.recognize(cropToRegion(frame, r))
+        return data.text.trim()
+      })
+    )
+    for (let i = 0; i < nameTexts.length; i++) {
+      if (isCountdownTimer(nameTexts[i])) {
+        currentSeatIdx = i
+        break
+      }
+    }
+  }
+
+  // 6. Build ordered player list (clockwise from BTN)
   const posLabels =
     POSITIONS[n] ?? Array.from({ length: n }, (_, i) => `Seat ${i + 1}`)
-  return Array.from({ length: n }, (_, offset) => {
+
+  // Convert currentSeatIdx (raw region index) to output offset for correct
+  // circular comparison. e.g. dealerIdx=5, currentSeatIdx=7 → currentOffset=2
+  const currentOffset =
+    currentSeatIdx >= 0
+      ? dealerIdx >= 0
+        ? (currentSeatIdx - dealerIdx + n) % n
+        : currentSeatIdx
+      : -1
+
+  const players: PlayerInfo[] = Array.from({ length: n }, (_, offset) => {
     const seatIdx = dealerIdx >= 0 ? (dealerIdx + offset) % n : offset
-    return { position: posLabels[offset], bb: bbValues[seatIdx] }
+
+    const detectedAmount =
+      seatIdx < actionValues.length ? actionValues[seatIdx] : null
+    let action: "fold" | number | null = null
+    if (detectedAmount !== null) {
+      action = detectedAmount
+    } else if (currentOffset >= 0 && offset < currentOffset) {
+      // Player came before current player in this betting round with no detected amount → Fold
+      action = "fold"
+    }
+
+    return {
+      position: posLabels[offset],
+      bb: bbValues[seatIdx],
+      action,
+      isMe: seatIdx === 0,
+      isTurn: seatIdx === currentSeatIdx,
+    }
   })
+
+  return { players, totalPot }
 }

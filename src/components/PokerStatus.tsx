@@ -1,8 +1,10 @@
+import { RefreshCw } from "lucide-react"
 import type { PlayerInfo } from "@/lib/poker-ocr"
 
 interface PokerStatusProps {
   players?: PlayerInfo[]
   isAnalyzing?: boolean
+  totalPot?: number | null
 }
 
 function PlayerTable({ players }: { players: PlayerInfo[] }) {
@@ -12,30 +14,59 @@ function PlayerTable({ players }: { players: PlayerInfo[] }) {
       <thead>
         <tr className="border-b border-border bg-muted/50">
           <th className="px-3 py-2 text-left font-medium text-muted-foreground">
-            Position
+            Pos
           </th>
           <th className="px-3 py-2 text-right font-medium text-muted-foreground">
             Stack
+          </th>
+          <th className="px-3 py-2 text-right font-medium text-muted-foreground">
+            Action
           </th>
         </tr>
       </thead>
       <tbody>
         {players.map((p, i) => (
-          <tr key={i} className="border-b border-border/50 last:border-0">
+          <tr
+            key={i}
+            className={`border-b border-border/50 last:border-0 ${
+              p.isTurn ? "bg-yellow-400/10" : p.isMe ? "bg-primary/5" : ""
+            }`}
+          >
             <td className="px-3 py-2 font-medium">
-              {p.position === "BTN" ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-black ring-1 ring-border">
-                    D
+              <span className="inline-flex items-center gap-1">
+                {p.isTurn && (
+                  <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-yellow-400/80 text-[9px] font-bold text-black ring-1 ring-yellow-400">
+                    ★
                   </span>
-                  {p.position}
-                </span>
-              ) : (
-                p.position
-              )}
+                )}
+                {!p.isTurn && p.isMe && (
+                  <span className="text-[10px] text-muted-foreground">▷</span>
+                )}
+                {p.position === "BTN" ? (
+                  <span className="inline-flex items-center gap-1">
+                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-white text-[9px] font-bold text-black ring-1 ring-border">
+                      D
+                    </span>
+                    BTN
+                  </span>
+                ) : (
+                  p.position
+                )}
+              </span>
+            </td>
+            <td
+              className={`px-3 py-2 text-right tabular-nums${p.bbStale ? "text-muted-foreground/50" : ""}`}
+            >
+              {p.bb !== null ? `${p.bb} BB` : "—"}
             </td>
             <td className="px-3 py-2 text-right tabular-nums">
-              {p.bb !== null ? `${p.bb} BB` : "—"}
+              {p.action === "fold" ? (
+                <span className="text-muted-foreground/50">Fold</span>
+              ) : p.action !== null ? (
+                `${p.action} BB`
+              ) : (
+                ""
+              )}
             </td>
           </tr>
         ))}
@@ -47,6 +78,7 @@ function PlayerTable({ players }: { players: PlayerInfo[] }) {
 export function PokerStatus({
   players = [],
   isAnalyzing = false,
+  totalPot,
 }: PokerStatusProps) {
   const left = players.slice(0, 4)
   const right = players.slice(4, 8)
@@ -54,14 +86,25 @@ export function PokerStatus({
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-muted-foreground">
+        <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
           Poker Status
+          {isAnalyzing && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
         </span>
-        {isAnalyzing && (
-          <span className="animate-pulse text-xs text-muted-foreground">
-            Scanning…
+        <div className="flex items-center gap-2">
+          <span
+            className="w-24 text-right text-xs font-semibold"
+            style={{
+              color:
+                totalPot !== null && totalPot !== undefined
+                  ? undefined
+                  : "transparent",
+            }}
+          >
+            <span className="rounded bg-orange-400/20 px-2 py-0.5 text-orange-600">
+              Pot: {totalPot ?? 0} BB
+            </span>
           </span>
-        )}
+        </div>
       </div>
       {players.length === 0 ? (
         <div className="flex items-center justify-center rounded-lg border border-border py-4">

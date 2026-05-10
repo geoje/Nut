@@ -17,7 +17,15 @@ export function App() {
   const [hasKey, setHasKey] = useState(() => !!getApiKey())
   const [players, setPlayers] = useState<PlayerInfo[]>([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const ocrRegionsRef = useRef<OcrRegions>({ dealerRegions: [], bbRegions: [] })
+  const [totalPot, setTotalPot] = useState<number | null>(null)
+  const prevPlayersRef = useRef<PlayerInfo[]>([])
+  const ocrRegionsRef = useRef<OcrRegions>({
+    dealerRegions: [],
+    bbRegions: [],
+    totalRegion: undefined,
+    actionRegions: [],
+    nameRegions: [],
+  })
 
   const handleRegionsChange = useCallback((regions: OcrRegions) => {
     ocrRegionsRef.current = regions
@@ -26,8 +34,19 @@ export function App() {
   const handleCapture = useCallback(async (canvas: HTMLCanvasElement) => {
     setIsAnalyzing(true)
     try {
-      const result = await extractPokerPlayers(canvas, ocrRegionsRef.current)
-      setPlayers(result)
+      const { players: result, totalPot: pot } = await extractPokerPlayers(
+        canvas,
+        ocrRegionsRef.current
+      )
+      const prev = prevPlayersRef.current
+      const merged = result.map((p, i) => {
+        if (p.bb !== null) return p
+        const prevBb = prev[i]?.bb ?? null
+        return prevBb !== null ? { ...p, bb: prevBb, bbStale: true } : p
+      })
+      prevPlayersRef.current = merged
+      setPlayers(merged)
+      setTotalPot(pot)
     } catch (e) {
       void e
     } finally {
@@ -97,7 +116,11 @@ export function App() {
       <div className="flex h-full w-0 flex-1 flex-col gap-0 overflow-hidden">
         {/* Poker status */}
         <div className="shrink overflow-hidden border-b border-border p-3">
-          <PokerStatus players={players} isAnalyzing={isAnalyzing} />
+          <PokerStatus
+            players={players}
+            isAnalyzing={isAnalyzing}
+            totalPot={totalPot}
+          />
         </div>
 
         {/* AI chat */}

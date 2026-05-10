@@ -1,6 +1,15 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { Button } from "@/components/ui/button"
-import { Monitor, StopCircle, CircleDot, Hash, X } from "lucide-react"
+import {
+  Monitor,
+  StopCircle,
+  CircleDot,
+  Hash,
+  X,
+  DollarSign,
+  Zap,
+  User,
+} from "lucide-react"
 import type { OcrRegions, Region } from "@/lib/poker-ocr"
 
 const MAX_PLAYERS = 8
@@ -10,7 +19,7 @@ interface ScreenShareProps {
   onRegionsChange?: (regions: OcrRegions) => void
 }
 
-type SelectMode = "dealer" | "bb" | null
+type SelectMode = "dealer" | "bb" | "total" | "action" | "name" | null
 
 interface DragState {
   startX: number
@@ -25,39 +34,66 @@ function clamp01(v: number) {
 
 const STORAGE_KEY = "poker-ocr-regions"
 
-function loadRegions(): { dealerRegions: Region[]; bbRegions: Region[] } {
+function loadRegions(): {
+  dealerRegions: Region[]
+  bbRegions: Region[]
+  totalRegion: Region | null
+  actionRegions: Region[]
+  nameRegions: Region[]
+} {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { dealerRegions: [], bbRegions: [] }
+    if (!raw)
+      return {
+        dealerRegions: [],
+        bbRegions: [],
+        totalRegion: null,
+        actionRegions: [],
+        nameRegions: [],
+      }
     const parsed = JSON.parse(raw)
     return {
       dealerRegions: Array.isArray(parsed.dealerRegions)
         ? parsed.dealerRegions
         : [],
       bbRegions: Array.isArray(parsed.bbRegions) ? parsed.bbRegions : [],
+      totalRegion: parsed.totalRegion ?? null,
+      actionRegions: Array.isArray(parsed.actionRegions)
+        ? parsed.actionRegions
+        : [],
+      nameRegions: Array.isArray(parsed.nameRegions) ? parsed.nameRegions : [],
     }
   } catch {
-    return { dealerRegions: [], bbRegions: [] }
+    return {
+      dealerRegions: [],
+      bbRegions: [],
+      totalRegion: null,
+      actionRegions: [],
+      nameRegions: [],
+    }
   }
 }
 
-function saveRegions(dealers: Region[], bbs: Region[]) {
+function saveRegions(
+  dealers: Region[],
+  bbs: Region[],
+  total: Region | null,
+  actions: Region[],
+  names: Region[]
+) {
   localStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify({ dealerRegions: dealers, bbRegions: bbs })
+    JSON.stringify({
+      dealerRegions: dealers,
+      bbRegions: bbs,
+      totalRegion: total,
+      actionRegions: actions,
+      nameRegions: names,
+    })
   )
 }
 
-/**
- * Sort regions clockwise starting from the one closest to the bottom-left
- * direction from the centroid (= "me", seat 1).
- *
- * Coordinate system: normalized (0-1), y increases downward (screen coords).
- * atan2(dy, dx) with y-down gives clockwise angles:
- *   right=0°, down=90°, left=180°, up=270°
- * "Me" = first seat encountered clockwise from 6 o'clock (90°, straight down).
- */
-const SWEEP_START_DEG = 90 // 6 o'clock — sweep clockwise from here
+const SWEEP_START_DEG = 90
 
 function sortClockwise(regions: Region[]): Region[] {
   if (regions.length <= 1) return [...regions]
@@ -70,11 +106,7 @@ function sortClockwise(regions: Region[]): Region[] {
     if (deg < 0) deg += 360
     return { r, deg }
   })
-  // Sort ascending = clockwise in screen coords
   withAngle.sort((a, b) => a.deg - b.deg)
-  // "Me" = first seat clockwise from SWEEP_START_DEG.
-  // Remap each angle to a [0, 360) value relative to the sweep start,
-  // then the smallest remapped value is the first seat past 6 o'clock.
   const remapped = withAngle.map(({ r, deg }) => ({
     r,
     rel: (deg - SWEEP_START_DEG + 360) % 360,
@@ -98,6 +130,15 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
   const [bbRegions, setBbRegions] = useState<Region[]>(
     () => loadRegions().bbRegions
   )
+  const [totalRegion, setTotalRegion] = useState<Region | null>(
+    () => loadRegions().totalRegion
+  )
+  const [actionRegions, setActionRegions] = useState<Region[]>(
+    () => loadRegions().actionRegions
+  )
+  const [nameRegions, setNameRegions] = useState<Region[]>(
+    () => loadRegions().nameRegions
+  )
   const [videoOffset, setVideoOffset] = useState<{
     x: number
     y: number
@@ -106,16 +147,34 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
   } | null>(null)
 
   const emitRegions = useCallback(
-    (dealers: Region[], bbs: Region[]) => {
-      saveRegions(dealers, bbs)
-      onRegionsChange?.({ dealerRegions: dealers, bbRegions: bbs })
+    (
+      dealers: Region[],
+      bbs: Region[],
+      total: Region | null,
+      actions: Region[],
+      names: Region[]
+    ) => {
+      saveRegions(dealers, bbs, total, actions, names)
+      onRegionsChange?.({
+        dealerRegions: dealers,
+        bbRegions: bbs,
+        totalRegion: total ?? undefined,
+        actionRegions: actions,
+        nameRegions: names,
+      })
     },
     [onRegionsChange]
   )
 
   // Emit saved regions on mount so App.tsx ref is populated from the start
   useEffect(() => {
-    onRegionsChange?.({ dealerRegions, bbRegions })
+    onRegionsChange?.({
+      dealerRegions,
+      bbRegions,
+      totalRegion: totalRegion ?? undefined,
+      actionRegions,
+      nameRegions,
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -219,49 +278,145 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
               ? [...prev, region]
               : [...prev.slice(0, -1), region]
           )
-          emitRegions(next, bbRegions)
+          emitRegions(next, bbRegions, totalRegion, actionRegions, nameRegions)
           if (next.length >= MAX_PLAYERS) setSelectMode(null)
           return next
         })
-      } else {
+      } else if (selectMode === "bb") {
         setBbRegions((prev) => {
           const next = sortClockwise(
             prev.length < MAX_PLAYERS
               ? [...prev, region]
               : [...prev.slice(0, -1), region]
           )
-          emitRegions(dealerRegions, next)
+          emitRegions(
+            dealerRegions,
+            next,
+            totalRegion,
+            actionRegions,
+            nameRegions
+          )
+          if (next.length >= MAX_PLAYERS) setSelectMode(null)
+          return next
+        })
+      } else if (selectMode === "total") {
+        setTotalRegion(region)
+        emitRegions(
+          dealerRegions,
+          bbRegions,
+          region,
+          actionRegions,
+          nameRegions
+        )
+        setSelectMode(null)
+      } else if (selectMode === "action") {
+        setActionRegions((prev) => {
+          const next = sortClockwise(
+            prev.length < MAX_PLAYERS
+              ? [...prev, region]
+              : [...prev.slice(0, -1), region]
+          )
+          emitRegions(dealerRegions, bbRegions, totalRegion, next, nameRegions)
+          if (next.length >= MAX_PLAYERS) setSelectMode(null)
+          return next
+        })
+      } else if (selectMode === "name") {
+        setNameRegions((prev) => {
+          const next = sortClockwise(
+            prev.length < MAX_PLAYERS
+              ? [...prev, region]
+              : [...prev.slice(0, -1), region]
+          )
+          emitRegions(
+            dealerRegions,
+            bbRegions,
+            totalRegion,
+            actionRegions,
+            next
+          )
           if (next.length >= MAX_PLAYERS) setSelectMode(null)
           return next
         })
       }
     }
     setDrag(null)
-  }, [drag, selectMode, dealerRegions, bbRegions, emitRegions])
+  }, [
+    drag,
+    selectMode,
+    dealerRegions,
+    bbRegions,
+    totalRegion,
+    actionRegions,
+    nameRegions,
+    emitRegions,
+  ])
 
   const removeRegion = useCallback(
-    (type: "dealer" | "bb", idx: number) => {
-      if (type === "dealer") {
+    (type: "dealer" | "bb" | "total" | "action" | "name", idx?: number) => {
+      if (type === "total") {
+        setTotalRegion(null)
+        emitRegions(dealerRegions, bbRegions, null, actionRegions, nameRegions)
+      } else if (type === "dealer") {
         setDealerRegions((prev) => {
           const next = sortClockwise(prev.filter((_, i) => i !== idx))
-          emitRegions(next, bbRegions)
+          emitRegions(next, bbRegions, totalRegion, actionRegions, nameRegions)
           return next
         })
-      } else {
+      } else if (type === "bb") {
         setBbRegions((prev) => {
           const next = sortClockwise(prev.filter((_, i) => i !== idx))
-          emitRegions(dealerRegions, next)
+          emitRegions(
+            dealerRegions,
+            next,
+            totalRegion,
+            actionRegions,
+            nameRegions
+          )
+          return next
+        })
+      } else if (type === "action") {
+        setActionRegions((prev) => {
+          const next = sortClockwise(prev.filter((_, i) => i !== idx))
+          emitRegions(dealerRegions, bbRegions, totalRegion, next, nameRegions)
+          return next
+        })
+      } else if (type === "name") {
+        setNameRegions((prev) => {
+          const next = sortClockwise(prev.filter((_, i) => i !== idx))
+          emitRegions(
+            dealerRegions,
+            bbRegions,
+            totalRegion,
+            actionRegions,
+            next
+          )
           return next
         })
       }
     },
-    [dealerRegions, bbRegions, emitRegions]
+    [
+      dealerRegions,
+      bbRegions,
+      totalRegion,
+      actionRegions,
+      nameRegions,
+      emitRegions,
+    ]
   )
 
   const clearAll = useCallback(() => {
     setDealerRegions([])
     setBbRegions([])
-    onRegionsChange?.({ dealerRegions: [], bbRegions: [] })
+    setTotalRegion(null)
+    setActionRegions([])
+    setNameRegions([])
+    onRegionsChange?.({
+      dealerRegions: [],
+      bbRegions: [],
+      totalRegion: undefined,
+      actionRegions: [],
+      nameRegions: [],
+    })
     setSelectMode(null)
   }, [onRegionsChange])
 
@@ -332,13 +487,33 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
         )
       : null
 
+  const dragBorderColor =
+    selectMode === "dealer"
+      ? "border-green-400 bg-green-400/20"
+      : selectMode === "total"
+        ? "border-orange-400 bg-orange-400/20"
+        : selectMode === "action"
+          ? "border-purple-400 bg-purple-400/20"
+          : selectMode === "name"
+            ? "border-blue-400 bg-blue-400/20"
+            : "border-yellow-400 bg-yellow-400/20"
+
+  const anyRegion =
+    dealerRegions.length > 0 ||
+    bbRegions.length > 0 ||
+    totalRegion !== null ||
+    actionRegions.length > 0 ||
+    nameRegions.length > 0
+
+  // hintText removed (hints no longer shown)
+
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-muted-foreground">
           Screen Share
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           {stream && (
             <>
               <Button
@@ -348,22 +523,58 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
                   setSelectMode((m) => (m === "dealer" ? null : "dealer"))
                 }
                 disabled={dealerRegions.length >= MAX_PLAYERS}
-                title="Drag to add a dealer button region"
+                title="딜러 버튼 영역"
               >
                 <CircleDot className="mr-1.5 h-3.5 w-3.5" />
-                Dealer {dealerRegions.length > 0 && `(${dealerRegions.length})`}
+                Dealer{dealerRegions.length > 0 && ` (${dealerRegions.length})`}
               </Button>
               <Button
                 size="sm"
                 variant={selectMode === "bb" ? "default" : "outline"}
                 onClick={() => setSelectMode((m) => (m === "bb" ? null : "bb"))}
                 disabled={bbRegions.length >= MAX_PLAYERS}
-                title="Drag to add a BB region"
+                title="스택 BB 영역"
               >
                 <Hash className="mr-1.5 h-3.5 w-3.5" />
-                BB {bbRegions.length > 0 && `(${bbRegions.length})`}
+                Stack{bbRegions.length > 0 && ` (${bbRegions.length})`}
               </Button>
-              {(dealerRegions.length > 0 || bbRegions.length > 0) && (
+              <Button
+                size="sm"
+                variant={selectMode === "total" ? "default" : "outline"}
+                onClick={() =>
+                  setSelectMode((m) => (m === "total" ? null : "total"))
+                }
+                disabled={!!totalRegion}
+                title="Total Pot 영역"
+              >
+                <DollarSign className="mr-1.5 h-3.5 w-3.5" />
+                Total{totalRegion && " ✓"}
+              </Button>
+              <Button
+                size="sm"
+                variant={selectMode === "action" ? "default" : "outline"}
+                onClick={() =>
+                  setSelectMode((m) => (m === "action" ? null : "action"))
+                }
+                disabled={actionRegions.length >= MAX_PLAYERS}
+                title="배팅 액션 영역"
+              >
+                <Zap className="mr-1.5 h-3.5 w-3.5" />
+                Action{actionRegions.length > 0 && ` (${actionRegions.length})`}
+              </Button>
+              <Button
+                size="sm"
+                variant={selectMode === "name" ? "default" : "outline"}
+                onClick={() =>
+                  setSelectMode((m) => (m === "name" ? null : "name"))
+                }
+                disabled={nameRegions.length >= MAX_PLAYERS}
+                title="이름 영역 (타이머 감지)"
+              >
+                <User className="mr-1.5 h-3.5 w-3.5" />
+                Name{nameRegions.length > 0 && ` (${nameRegions.length})`}
+              </Button>
+              {anyRegion && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -411,14 +622,62 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
               onMouseUp={commitDrag}
               onMouseLeave={commitDrag}
             >
+              {/* Layer 1: rectangles only */}
               {videoOffset &&
                 dealerRegions.map((r, i) => (
                   <div
-                    key={`dealer-${i}`}
+                    key={`dealer-rect-${i}`}
                     className="pointer-events-none absolute border-2 border-green-400 bg-green-400/10"
                     style={regionPx(r, videoOffset)}
-                  >
-                    <span className="absolute -top-5 left-0 flex items-center gap-0.5 rounded bg-green-400/90 px-1 text-[10px] font-semibold text-black">
+                  />
+                ))}
+              {videoOffset &&
+                bbRegions.map((r, i) => (
+                  <div
+                    key={`bb-rect-${i}`}
+                    className="pointer-events-none absolute border-2 border-yellow-400 bg-yellow-400/10"
+                    style={regionPx(r, videoOffset)}
+                  />
+                ))}
+              {videoOffset && totalRegion && (
+                <div
+                  className="pointer-events-none absolute border-2 border-orange-400 bg-orange-400/10"
+                  style={regionPx(totalRegion, videoOffset)}
+                />
+              )}
+              {videoOffset &&
+                actionRegions.map((r, i) => (
+                  <div
+                    key={`action-rect-${i}`}
+                    className="pointer-events-none absolute border-2 border-purple-400 bg-purple-400/10"
+                    style={regionPx(r, videoOffset)}
+                  />
+                ))}
+              {videoOffset &&
+                nameRegions.map((r, i) => (
+                  <div
+                    key={`name-rect-${i}`}
+                    className="pointer-events-none absolute border-2 border-blue-400 bg-blue-400/10"
+                    style={regionPx(r, videoOffset)}
+                  />
+                ))}
+              {dragPx && (
+                <div
+                  className={`pointer-events-none absolute border-2 ${dragBorderColor}`}
+                  style={dragPx}
+                />
+              )}
+
+              {/* Layer 2: labels on top of all rectangles */}
+              {videoOffset &&
+                dealerRegions.map((r, i) => {
+                  const px = regionPx(r, videoOffset)
+                  return (
+                    <span
+                      key={`dealer-label-${i}`}
+                      className="absolute z-10 flex items-center gap-0.5 rounded bg-green-400/50 px-1 text-[10px] font-semibold text-black backdrop-blur-[1px]"
+                      style={{ left: px.left, top: px.top - 20 }}
+                    >
                       D{i + 1}
                       <button
                         className="pointer-events-auto ml-0.5 opacity-70 hover:opacity-100"
@@ -430,16 +689,17 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
                         ×
                       </button>
                     </span>
-                  </div>
-                ))}
+                  )
+                })}
               {videoOffset &&
-                bbRegions.map((r, i) => (
-                  <div
-                    key={`bb-${i}`}
-                    className="pointer-events-none absolute border-2 border-yellow-400 bg-yellow-400/10"
-                    style={regionPx(r, videoOffset)}
-                  >
-                    <span className="absolute -top-5 left-0 flex items-center gap-0.5 rounded bg-yellow-400/90 px-1 text-[10px] font-semibold text-black">
+                bbRegions.map((r, i) => {
+                  const px = regionPx(r, videoOffset)
+                  return (
+                    <span
+                      key={`bb-label-${i}`}
+                      className="absolute z-10 flex items-center gap-0.5 rounded bg-yellow-400/50 px-1 text-[10px] font-semibold text-black backdrop-blur-[1px]"
+                      style={{ left: px.left, top: px.top - 20 }}
+                    >
                       B{i + 1}
                       <button
                         className="pointer-events-auto ml-0.5 opacity-70 hover:opacity-100"
@@ -451,18 +711,74 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
                         ×
                       </button>
                     </span>
-                  </div>
-                ))}
-              {dragPx && (
-                <div
-                  className={`pointer-events-none absolute border-2 ${
-                    selectMode === "dealer"
-                      ? "border-green-400 bg-green-400/20"
-                      : "border-yellow-400 bg-yellow-400/20"
-                  }`}
-                  style={dragPx}
-                />
-              )}
+                  )
+                })}
+              {videoOffset &&
+                totalRegion &&
+                (() => {
+                  const px = regionPx(totalRegion, videoOffset)
+                  return (
+                    <span
+                      className="absolute z-10 flex items-center gap-0.5 rounded bg-orange-400/50 px-1 text-[10px] font-semibold text-black backdrop-blur-[1px]"
+                      style={{ left: px.left, top: px.top - 20 }}
+                    >
+                      Total
+                      <button
+                        className="pointer-events-auto ml-0.5 opacity-70 hover:opacity-100"
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          removeRegion("total")
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )
+                })()}
+              {videoOffset &&
+                actionRegions.map((r, i) => {
+                  const px = regionPx(r, videoOffset)
+                  return (
+                    <span
+                      key={`action-label-${i}`}
+                      className="absolute z-10 flex items-center gap-0.5 rounded bg-purple-400/50 px-1 text-[10px] font-semibold text-white backdrop-blur-[1px]"
+                      style={{ left: px.left, top: px.top - 20 }}
+                    >
+                      A{i + 1}
+                      <button
+                        className="pointer-events-auto ml-0.5 opacity-70 hover:opacity-100"
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          removeRegion("action", i)
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )
+                })}
+              {videoOffset &&
+                nameRegions.map((r, i) => {
+                  const px = regionPx(r, videoOffset)
+                  return (
+                    <span
+                      key={`name-label-${i}`}
+                      className="absolute z-10 flex items-center gap-0.5 rounded bg-blue-400/50 px-1 text-[10px] font-semibold text-white backdrop-blur-[1px]"
+                      style={{ left: px.left, top: px.top - 20 }}
+                    >
+                      N{i + 1}
+                      <button
+                        className="pointer-events-auto ml-0.5 opacity-70 hover:opacity-100"
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          removeRegion("name", i)
+                        }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  )
+                })}
             </div>
           </>
         ) : (
@@ -477,14 +793,6 @@ export function ScreenShare({ onCapture, onRegionsChange }: ScreenShareProps) {
           </p>
         )}
       </div>
-
-      {selectMode && (
-        <p className="text-center text-xs text-muted-foreground">
-          {selectMode === "dealer"
-            ? `Dealer 버튼 영역 드래그 (${dealerRegions.length}/${MAX_PLAYERS})`
-            : `BB 영역 드래그 (${bbRegions.length}/${MAX_PLAYERS})`}
-        </p>
-      )}
     </div>
   )
 }
